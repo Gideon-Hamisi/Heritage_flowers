@@ -1,0 +1,275 @@
+import pandas as pd
+import numpy as np
+
+# =========================================
+# FILE PATH
+# =========================================
+file_path = r"C:\Users\G_BOOTS\OneDrive\Desktop\heritage flowers\SALES REREPORT-by 31st march.xlsx"
+
+# Load Excel
+xls = pd.ExcelFile(file_path)
+
+# =========================================
+# 1. PROCESS MARCH SHEET
+# =========================================
+march_sheet = [s for s in xls.sheet_names if "march" in s.lower()][0]
+df_march = pd.read_excel(file_path, sheet_name=march_sheet)
+
+# Clean columns
+df_march.columns = df_march.columns.str.strip()
+
+# Rename
+df_march = df_march.rename(columns={
+    "DATE": "Date",
+    "CLIENT": "Customer",
+    "Invoice to": "Invoice_To",
+    "INVOICE NO.": "Invoice_No",
+    "NO. STEMS": "Quantity_Sold",
+    "NO. BOXES": "No_Boxes",
+    "VALUE (USD)": "USD_Value",
+    "VALUE(EUR)": "EUR_Value",
+    "DROP POINT": "Drop_Off_Point",
+    "DESTINATION": "Destination"
+})
+
+# Fix Date
+df_march["Date"] = pd.to_datetime(
+    df_march["Date"].astype(str).str.strip(),
+    format="%d.%m.%Y",
+    errors="coerce"
+)
+
+# Clean currency
+df_march["USD_Value"] = df_march["USD_Value"].astype(str).str.replace(r"[$, ]", "", regex=True)
+df_march["EUR_Value"] = df_march["EUR_Value"].astype(str).str.replace(r"[€, ]", "", regex=True)
+
+df_march["USD_Value"] = pd.to_numeric(df_march["USD_Value"], errors="coerce")
+df_march["EUR_Value"] = pd.to_numeric(df_march["EUR_Value"], errors="coerce")
+
+# Currency logic
+def get_currency(row):
+    if pd.notna(row["USD_Value"]) and row["USD_Value"] > 0:
+        return "USD"
+    elif pd.notna(row["EUR_Value"]) and row["EUR_Value"] > 0:
+        return "EUR"
+    else:
+        return np.nan
+
+df_march["Currency"] = df_march.apply(get_currency, axis=1)
+
+def get_total_sales(row):
+    if row["Currency"] == "USD":
+        return row["USD_Value"]
+    elif row["Currency"] == "EUR":
+        return row["EUR_Value"]
+    else:
+        return np.nan
+
+df_march["Total_Sales"] = df_march.apply(get_total_sales, axis=1)
+
+# =========================================
+# 2. PROCESS JAN_FEB SHEET
+# =========================================
+df_jf = pd.read_excel(file_path, sheet_name="JAN_FEB")
+
+# Strong column cleaning
+df_jf.columns = (
+    df_jf.columns
+    .str.strip()
+    .str.replace(" ", "_")
+    .str.replace(".", "", regex=False)
+    .str.upper()
+)
+
+print("JAN_FEB columns:", df_jf.columns.tolist())
+
+# Rename
+df_jf = df_jf.rename(columns={
+    "DATE": "Date",
+    "CLIENT": "Customer",
+    "INVOICE_TO": "Invoice_To",
+    "INVOICE_NO": "Invoice_No",
+    "NO_STEMS": "Quantity_Sold",
+    "NO_BOXES": "No_Boxes",
+    "VALUE_(USD)": "USD_Value",
+    "VALUE(EUR)": "EUR_Value",
+    "DROP_POINT": "Drop_Off_Point",
+    "DESTINATION": "Destination"
+})
+
+# Fix Date
+df_jf["Date"] = pd.to_datetime(
+    df_jf["Date"].astype(str).str.strip(),
+    dayfirst=True,
+    errors="coerce"
+)
+
+# Clean currency
+df_jf["USD_Value"] = df_jf["USD_Value"].astype(str).str.replace(r"[$, ]", "", regex=True)
+df_jf["EUR_Value"] = df_jf["EUR_Value"].astype(str).str.replace(r"[€, ]", "", regex=True)
+
+df_jf["USD_Value"] = pd.to_numeric(df_jf["USD_Value"], errors="coerce")
+df_jf["EUR_Value"] = pd.to_numeric(df_jf["EUR_Value"], errors="coerce")
+
+# Currency logic
+df_jf["Currency"] = df_jf.apply(get_currency, axis=1)
+df_jf["Total_Sales"] = df_jf.apply(get_total_sales, axis=1)
+
+# =========================================
+# 3. STANDARDIZE BOTH DATASETS
+# =========================================
+exchange_rates = {"USD": 130, "EUR": 140, "KES": 1}
+
+# --- March ---
+df_march["Market"] = "Export"
+df_march["Exchange_Rate_to_KES"] = df_march["Currency"].map(exchange_rates)
+df_march["Total_Sales_KES"] = df_march["Total_Sales"] * df_march["Exchange_Rate_to_KES"]
+df_march["Unit_Price"] = df_march["Total_Sales"] / df_march["Quantity_Sold"]
+
+df_march_final = df_march[[
+    "Date","Customer","Invoice_To","Invoice_No",
+    "Market","Drop_Off_Point","Currency",
+    "Quantity_Sold","No_Boxes","Unit_Price",
+    "Total_Sales","Exchange_Rate_to_KES","Total_Sales_KES"
+]].copy()
+
+# --- JAN/FEB ---
+df_jf["Market"] = "Export"
+df_jf["Exchange_Rate_to_KES"] = df_jf["Currency"].map(exchange_rates)
+df_jf["Total_Sales_KES"] = df_jf["Total_Sales"] * df_jf["Exchange_Rate_to_KES"]
+df_jf["Unit_Price"] = df_jf["Total_Sales"] / df_jf["Quantity_Sold"]
+
+df_jf_final = df_jf[[
+    "Date","Customer","Invoice_To","Invoice_No",
+    "Market","Drop_Off_Point","Currency",
+    "Quantity_Sold","No_Boxes","Unit_Price",
+    "Total_Sales","Exchange_Rate_to_KES","Total_Sales_KES"
+]].copy()
+
+# =========================================
+# 4. MERGE DATA
+# =========================================
+df_all = pd.concat([df_jf_final, df_march_final], ignore_index=True)
+
+# =========================================
+# 5. FINAL CLEANING
+# =========================================
+numeric_cols = [
+    "Quantity_Sold","No_Boxes","Unit_Price",
+    "Total_Sales","Exchange_Rate_to_KES","Total_Sales_KES"
+]
+
+for col in numeric_cols:
+    df_all.loc[:, col] = pd.to_numeric(df_all[col], errors="coerce")
+
+# Remove invalid rows
+df_all = df_all[
+    df_all["Invoice_No"].notna() &
+    df_all["Quantity_Sold"].notna()
+]
+
+# =========================================
+# 6. VALIDATION
+# =========================================
+print("\nDate range:", df_all["Date"].min(), "→", df_all["Date"].max())
+print("\nRecords per month:\n", df_all["Date"].dt.month.value_counts())
+
+# =========================================
+# 7. SAVE FINAL DATASET
+# =========================================
+output_path = r"C:\Users\G_BOOTS\OneDrive\Desktop\heritage flowers\clean_sales_Q1_2026.csv"
+df_all.to_csv(output_path, index=False)
+
+print("\n✅ FULL MERGED DATA (JAN + FEB + MARCH) READY")
+
+## STEP 1: PREP TIME SERIES DATA
+# Ensure Date is datetime
+df_all["Date"] = pd.to_datetime(df_all["Date"], errors="coerce")
+
+# Drop null dates
+df_all = df_all.dropna(subset=["Date"])
+
+# Sort
+df_all = df_all.sort_values("Date")
+
+# Daily revenue
+daily_revenue = df_all.groupby("Date")["Total_Sales_KES"].sum().reset_index()
+
+# Set index for time series
+daily_revenue = daily_revenue.set_index("Date")
+
+print(daily_revenue.head())
+
+## STEP 2: PLOT REVENUE TREND
+
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(12,6))
+plt.plot(daily_revenue.index, daily_revenue["Total_Sales_KES"])
+plt.title("Daily Revenue Trend (KES)")
+plt.xlabel("Date")
+plt.ylabel("Revenue (KES)")
+plt.grid()
+plt.show()
+
+## STEP 3: MONTHLY TREND (IMPORTANT FOR BUSINESS)
+monthly_revenue = df_all.resample("M", on="Date")["Total_Sales_KES"].sum()
+
+plt.figure(figsize=(10,5))
+plt.plot(monthly_revenue.index, monthly_revenue.values, marker='o')
+plt.title("Monthly Revenue (KES)")
+plt.xlabel("Month")
+plt.ylabel("Revenue")
+plt.grid()
+plt.show()
+
+print(monthly_revenue)
+
+## STEP 4: SIMPLE FORECAST (MOVING AVERAGE)
+# Rolling average (7-day)
+daily_revenue["MA_7"] = daily_revenue["Total_Sales_KES"].rolling(window=7).mean()
+
+plt.figure(figsize=(12,6))
+plt.plot(daily_revenue.index, daily_revenue["Total_Sales_KES"], label="Actual")
+plt.plot(daily_revenue.index, daily_revenue["MA_7"], label="7-Day MA")
+plt.legend()
+plt.title("Revenue with Moving Average")
+plt.grid()
+plt.show()
+
+## STEP 5: FORECAST (ADVANCED - LINEAR TREND MODEL)
+from sklearn.linear_model import LinearRegression
+import numpy as np
+
+# Prepare data
+df_ts = daily_revenue.reset_index()
+df_ts["t"] = np.arange(len(df_ts))  # time index
+
+X = df_ts[["t"]]
+y = df_ts["Total_Sales_KES"]
+
+# Train model
+model = LinearRegression()
+model.fit(X, y)
+
+# Predict future (next 30 days)
+future_days = 30
+future_t = np.arange(len(df_ts), len(df_ts) + future_days).reshape(-1, 1)
+
+future_preds = model.predict(future_t)
+
+# Create future dates
+future_dates = pd.date_range(
+    start=df_ts["Date"].max(),
+    periods=future_days + 1,
+    freq="D"
+)[1:]
+
+# Plot
+plt.figure(figsize=(12,6))
+plt.plot(df_ts["Date"], y, label="Actual")
+plt.plot(future_dates, future_preds, label="Forecast")
+plt.legend()
+plt.title("30-Day Revenue Forecast")
+plt.grid()
+plt.show()
