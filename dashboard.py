@@ -7,8 +7,7 @@ from sklearn.linear_model import LinearRegression
 # ================================
 # LOAD DATA
 # ================================
-file_path = r"C:\Users\G_BOOTS\OneDrive\Desktop\heritage flowers\clean_sales_Q1_2026.csv"
-df = pd.read_csv(file_path)
+df = pd.read_csv("clean_sales_Q1_2026.csv")
 
 # Clean date
 df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
