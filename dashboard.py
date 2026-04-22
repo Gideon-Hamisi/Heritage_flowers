@@ -2,19 +2,23 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.linear_model import LinearRegression
 
 # ================================
 # LOAD DATA
 # ================================
 df = pd.read_csv("clean_sales_Q1_2026.csv")
+prod = pd.read_excel("clean_production_data.xlsx")
 
-# Clean date
+# Clean dates
 df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 df = df.dropna(subset=["Date"])
 
+prod["Date"] = pd.to_datetime(prod["Date"], errors="coerce")
+prod = prod.dropna(subset=["Date"])
+
 # Create YearMonth
 df["YearMonth"] = df["Date"].dt.to_period("M").astype(str)
+prod["YearMonth"] = prod["Date"].dt.to_period("M").astype(str)
 
 # ================================
 # SIDEBAR FILTERS
@@ -38,14 +42,18 @@ df = df[
     df["Drop_Off_Point"].isin(drop_points)
 ]
 
+# Match production to filtered months
+prod = prod[prod["YearMonth"].isin(df["YearMonth"].unique())]
+
 # ================================
-# CREATE TABS
+# TABS
 # ================================
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Overview",
     "📦 Logistics",
     "🏆 Customers",
-    "📊 Performance"
+    "📊 Performance",
+    "🌱 Production vs Sales"
 ])
 
 # =========================================================
@@ -73,9 +81,8 @@ with tab1:
     ax1.grid()
     st.pyplot(fig1)
 
-    # MONTHLY BAR CHART
+    # MONTHLY SALES
     st.subheader("📊 Monthly Sales Comparison")
-
     monthly_sales = (
         df.groupby("YearMonth")["Total_Sales_KES"]
         .sum()
@@ -85,15 +92,14 @@ with tab1:
 
     fig_bar, ax_bar = plt.subplots()
     ax_bar.bar(monthly_sales["YearMonth"], monthly_sales["Total_Sales_KES"])
-    ax_bar.tick_params(axis='x', rotation=45)
     ax_bar.grid(axis="y")
 
     for i, v in enumerate(monthly_sales["Total_Sales_KES"]):
-        ax_bar.text(i, v, f"{v:,.0f}", ha='center', va='bottom')
+        ax_bar.text(i, v, f"{v:,.0f}", ha='center')
 
     st.pyplot(fig_bar)
 
-    # MONTHLY TREND LINE
+    # MONTHLY TREND
     monthly = df.resample("ME", on="Date")["Total_Sales_KES"].sum()
 
     st.subheader("📅 Monthly Revenue Trend")
@@ -102,36 +108,33 @@ with tab1:
     ax3.grid()
     st.pyplot(fig3)
 
-    # FORECAST
-    st.subheader("🔮 30-Day Revenue Forecast")
+    # CUMULATIVE
+    st.subheader("📈 Cumulative Revenue (Q1)")
+    cumulative = monthly.cumsum()
 
-    df_ts = daily.copy()
-    df_ts["t"] = np.arange(len(df_ts))
+    fig5, ax5 = plt.subplots()
+    ax5.plot(cumulative.index, cumulative.values, marker='o')
+    ax5.grid()
+    st.pyplot(fig5)
 
-    model = LinearRegression()
-    model.fit(df_ts[["t"]], df_ts["Total_Sales_KES"])
+    # TOP CUSTOMERS (FIXED)
+    st.subheader("🏆 Top Customers by Revenue")
 
-    future_days = 30
-    future_t = np.arange(len(df_ts), len(df_ts) + future_days)
+    top_customers = (
+        df.groupby("Customer")["Total_Sales_KES"]
+        .sum()
+        .nlargest(10)
+    )
 
-    future_preds = model.predict(pd.DataFrame(future_t, columns=["t"]))
+    fig_cust, ax_cust = plt.subplots()
+    ax_cust.barh(top_customers.index, top_customers.values)
+    ax_cust.invert_yaxis()
+    ax_cust.grid()
 
-    future_dates = pd.date_range(
-        start=df_ts["Date"].max(),
-        periods=future_days + 1,
-        freq="D"
-    )[1:]
-
-    fig4, ax4 = plt.subplots()
-    ax4.plot(df_ts["Date"], df_ts["Total_Sales_KES"], label="Actual")
-    ax4.plot(future_dates, future_preds, label="Forecast")
-    ax4.legend()
-    ax4.grid()
-
-    st.pyplot(fig4)
+    st.pyplot(fig_cust)
 
 # =========================================================
-# 📦 TAB 2: LOGISTICS ANALYSIS
+# 📦 TAB 2: LOGISTICS
 # =========================================================
 with tab2:
     st.subheader("📦 Monthly Sales by Drop-Off Point")
@@ -150,8 +153,25 @@ with tab2:
 
     st.bar_chart(pivot_logistics)
 
+    # MARKET BREAKDOWN
+    st.subheader("🌍 Market Breakdown")
+
+    market_data = (
+        df.groupby(["YearMonth", "Market"])["Total_Sales_KES"]
+        .sum()
+        .reset_index()
+    )
+
+    pivot_market = market_data.pivot(
+        index="YearMonth",
+        columns="Market",
+        values="Total_Sales_KES"
+    ).fillna(0)
+
+    st.bar_chart(pivot_market)
+
 # =========================================================
-# 🏆 TAB 3: CUSTOMER ANALYSIS
+# 🏆 TAB 3: CUSTOMERS
 # =========================================================
 with tab3:
     st.subheader("🏆 Monthly Sales by Customer")
@@ -182,7 +202,7 @@ with tab3:
     st.bar_chart(pivot_customer)
 
 # =========================================================
-# 📊 TAB 4: PERFORMANCE SUMMARY
+# 📊 TAB 4: PERFORMANCE
 # =========================================================
 with tab4:
     st.subheader("📊 Performance Summary")
@@ -194,3 +214,30 @@ with tab4:
     }).sort_values("Total_Sales_KES", ascending=False)
 
     st.dataframe(summary)
+
+# =========================================================
+# 🌱 TAB 5: PRODUCTION VS SALES
+# =========================================================
+with tab5:
+    st.subheader("🌱 Production vs Sales")
+
+    prod_monthly = prod.groupby("YearMonth")["Production_Qty"].sum()
+    sales_monthly = df.groupby("YearMonth")["Quantity_Sold"].sum()
+
+    combined = pd.DataFrame({
+        "Production": prod_monthly,
+        "Sales": sales_monthly
+    }).fillna(0)
+
+    st.line_chart(combined)
+
+    # GAP
+    combined["Gap"] = combined["Production"] - combined["Sales"]
+
+    st.subheader("📉 Production Gap (Unsold Stock)")
+
+    fig_gap, ax_gap = plt.subplots()
+    ax_gap.bar(combined.index, combined["Gap"])
+    ax_gap.grid(axis="y")
+
+    st.pyplot(fig_gap)
